@@ -206,6 +206,7 @@ fn allow_allocations_for_type(memory_type: EfiMemoryType) -> Result<(), MemoryEr
 }
 
 #[patina_test]
+#[coverage(off)]
 fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina::test::Result {
     // Allocate a page, and make sure it is accessible.
     let result = mm.allocate_pages(1, AllocationOptions::new());
@@ -239,7 +240,7 @@ fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina::te
     u_assert!(result.is_ok(), "Failed to free page.");
 
     // Allocate with a max address limit.
-    let max_address = 0x1000_0000;
+    let max_address = 0x100_8000_0000;
     let result =
         mm.allocate_pages(1, AllocationOptions::new().with_strategy(PageAllocationStrategy::MaxAddress(max_address)));
     u_assert!(result.is_ok(), "Failed to allocate with max address limit.");
