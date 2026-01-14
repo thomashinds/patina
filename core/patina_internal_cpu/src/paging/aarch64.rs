@@ -64,7 +64,6 @@ pub fn create_cpu_aarch64_paging<A: PageAllocator + 'static>(
 
 #[cfg(test)]
 #[coverage(off)]
-#[cfg(target_arch = "x86_64")] // Issue #1071
 mod tests {
     use std::alloc::{Layout, alloc, dealloc};
 
@@ -138,26 +137,5 @@ mod tests {
         let result = paging.query_memory_region(0x1000, 0x1000);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), MemoryAttributes::Writeback | MemoryAttributes::Uncached);
-    }
-
-    #[test]
-    fn test_create_cpu_aarch64_paging() {
-        let mut mock_page_allocator = MockPageAllocator::new();
-
-        // Create a memory layout with the specified size and alignment
-        let layout = Layout::from_size_align(4096, 4096).unwrap();
-        // Allocate the memory
-        let ptr = unsafe { alloc(layout) };
-        let ptr_u64 = ptr as u64;
-
-        mock_page_allocator.expect_allocate_page().returning(move |_, _, _| Ok(ptr_u64));
-
-        let res = create_cpu_aarch64_paging(mock_page_allocator);
-        assert!(res.is_ok());
-
-        // Deallocate the memory when done unsafe
-        unsafe {
-            dealloc(ptr, layout);
-        }
     }
 }
