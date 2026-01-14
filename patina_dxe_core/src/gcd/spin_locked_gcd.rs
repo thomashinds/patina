@@ -2942,7 +2942,6 @@ impl<'a> Iterator for DescRangeIterator<'a> {
 
 #[cfg(test)]
 #[coverage(off)]
-#[cfg(target_arch = "x86_64")] // Issue #1071
 mod tests {
     //! GCD (Global Coherency Domain) test module.
     //!
