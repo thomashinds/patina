@@ -240,8 +240,12 @@ where
 
         let idx = if !self.available.get().is_null() { self.idx(self.available.get()) } else { self.len() };
 
-        Self::build_linked_list(&buffer[idx..]);
-        self.available.set(buffer[idx].as_mut_ptr());
+        if idx < buffer.len() {
+            Self::build_linked_list(&buffer[idx..]);
+            self.available.set(buffer[idx].as_mut_ptr());
+        } else {
+            self.available.set(core::ptr::null_mut());
+        }
 
         self.data = buffer;
     }
@@ -698,6 +702,29 @@ mod tests {
 
         assert_eq!(Node::successor(p1).unwrap().data, 3);
         assert!(Node::successor(p4).is_none());
+    }
+
+    #[test]
+    fn test_resize_with_no_free_space() {
+        const CAPACITY: usize = 5;
+        let mut memory = [0; CAPACITY * node_size::<usize>()];
+        let mut storage = Storage::<usize>::with_capacity(&mut memory);
+
+        // Fill all the storage
+        for i in 0..CAPACITY {
+            storage.add(i).unwrap();
+        }
+
+        // Resize to the exact same capacity (no free space)
+        let mut new_memory = [0; CAPACITY * node_size::<usize>()];
+        storage.resize(&mut new_memory);
+
+        // Verify that available is null indicating no free space
+        assert!(storage.available.get().is_null());
+
+        // Verify that no more nodes can be added
+        assert!(storage.add(99).is_err());
+        assert_eq!(storage.len(), CAPACITY);
     }
 
     #[test]
