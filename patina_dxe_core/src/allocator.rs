@@ -1272,6 +1272,18 @@ mod tests {
                 test_support::init_test_protocol_db();
                 test_support::reset_allocators();
             }
+
+            let _guard = test_support::StateGuard::new(|| {
+                // SAFETY: Cleanup code runs with global lock held, resetting
+                // global state that was initialized above.
+                unsafe {
+                    GCD.reset();
+                    PROTOCOL_DB.reset();
+                    reset_allocators();
+                    ALLOCATORS.lock().reset();
+                }
+            });
+
             f();
         })
         .unwrap();
