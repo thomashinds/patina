@@ -365,6 +365,7 @@ impl GCD {
         memory_type: dxe_services::GcdMemoryType,
         base_address: usize,
         len: usize,
+        attributes: u64,
         capabilities: u64,
     ) -> Result<usize, EfiError> {
         ensure!(self.maximum_address != 0, EfiError::NotReady);
@@ -376,6 +377,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}] Initializing memory blocks at {:#x}", function!(), base_address);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Memory Type: {:?}", function!(), memory_type);
+        log::trace!(target: "allocations", "[{}]   Attributes: {:#x}", function!(), attributes);
         log::trace!(target: "allocations", "[{}]   Capabilities: {:#x}", function!(), capabilities);
 
         let unallocated_memory_space = MemoryBlock::Unallocated(dxe_services::MemorySpaceDescriptor {
@@ -391,17 +393,17 @@ impl GCD {
         self.memory_blocks.add(unallocated_memory_space).map_err(|_| EfiError::OutOfResources)?;
         let idx = unsafe { self.add_memory_space(memory_type, base_address, len, capabilities) }?;
 
-        //initialize attributes on the first block to WB + XP
+        // Initialize attributes on the first block to WB + XP
         match self.set_memory_space_attributes(
             base_address,
             len,
-            (MemoryAttributes::Writeback | MemoryAttributes::ExecuteProtect).bits(),
+            GCD.memory_protection_policy.apply_allocated_memory_protection_policy(attributes),
         ) {
             Ok(_) | Err(EfiError::NotReady) => Ok(()),
             Err(err) => Err(err),
         }?;
 
-        //allocate a chunk of the block to hold the actual first GCD slice
+        // Allocate a chunk of the block to hold the actual first GCD slice
         self.allocate_memory_space(
             AllocateType::Address(base_address),
             dxe_services::GcdMemoryType::SystemMemory,
@@ -411,12 +413,12 @@ impl GCD {
             None,
         )?;
 
-        // remove the XP and add RP on the remaining free block.
+        // Apply free memory policy on the remaining free block.
         if len > MEMORY_BLOCK_SLICE_SIZE {
             match self.set_memory_space_attributes(
                 base_address + MEMORY_BLOCK_SLICE_SIZE,
                 len - MEMORY_BLOCK_SLICE_SIZE,
-                (MemoryAttributes::Writeback | MemoryAttributes::ReadProtect).bits(),
+                MemoryProtectionPolicy::apply_free_memory_policy(attributes),
             ) {
                 Ok(_) | Err(EfiError::NotReady) => Ok(()),
                 Err(err) => Err(err),
@@ -2024,10 +2026,11 @@ impl SpinLockedGcd {
         memory_type: dxe_services::GcdMemoryType,
         base_address: usize,
         len: usize,
+        attributes: u64,
         capabilities: u64,
     ) -> Result<usize, EfiError> {
         // SAFETY: Caller must uphold the safety contract of init_memory_blocks
-        unsafe { self.memory.lock().init_memory_blocks(memory_type, base_address, len, capabilities) }
+        unsafe { self.memory.lock().init_memory_blocks(memory_type, base_address, len, attributes, capabilities) }
     }
 
     #[coverage(off)]
@@ -3012,7 +3015,8 @@ mod tests {
                     dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     MEMORY_BLOCK_SLICE_SIZE - 1,
-                    0,
+                    efi::MEMORY_WB,
+                    efi::MEMORY_WB,
                 )
             },
             "First add memory space with system memory should contain enough space to contain the block list."
@@ -4350,6 +4354,7 @@ mod tests {
                 address,
                 MEMORY_BLOCK_SLICE_SIZE,
                 efi::MEMORY_WB,
+                efi::MEMORY_WB,
             )
             .unwrap();
         }
@@ -4433,6 +4438,7 @@ mod tests {
                     address,
                     MEMORY_BLOCK_SLICE_SIZE,
                     efi::MEMORY_WB,
+                    efi::MEMORY_WB,
                 )
                 .unwrap();
             }
@@ -4464,6 +4470,7 @@ mod tests {
                     dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     MEMORY_BLOCK_SLICE_SIZE,
+                    efi::MEMORY_WB,
                     efi::MEMORY_WB,
                 )
                 .unwrap();
@@ -4501,6 +4508,7 @@ mod tests {
                     address,
                     MEMORY_BLOCK_SLICE_SIZE,
                     efi::MEMORY_WB,
+                    efi::MEMORY_WB,
                 )
                 .unwrap();
             }
@@ -4529,6 +4537,7 @@ mod tests {
                     dxe_services::GcdMemoryType::SystemMemory,
                     base as usize,
                     GCD_SIZE,
+                    efi::MEMORY_WB,
                     efi::MEMORY_WB,
                 )
                 .unwrap();
@@ -4572,6 +4581,7 @@ mod tests {
                     dxe_services::GcdMemoryType::SystemMemory,
                     base as usize,
                     GCD_SIZE,
+                    efi::MEMORY_WB,
                     efi::MEMORY_WB,
                 )
                 .unwrap();
@@ -4721,6 +4731,7 @@ mod tests {
                     address,
                     MEMORY_BLOCK_SLICE_SIZE,
                     efi::MEMORY_WB,
+                    efi::MEMORY_WB,
                 )
                 .unwrap();
             }
@@ -4760,6 +4771,7 @@ mod tests {
                     dxe_services::GcdMemoryType::SystemMemory,
                     base as usize,
                     GCD_SIZE,
+                    efi::MEMORY_WB,
                     efi::MEMORY_WB,
                 )
                 .unwrap();
@@ -4810,6 +4822,7 @@ mod tests {
                     dxe_services::GcdMemoryType::SystemMemory,
                     base as usize,
                     GCD_SIZE,
+                    efi::MEMORY_WB,
                     efi::MEMORY_WB,
                 )
                 .unwrap();
@@ -4903,6 +4916,7 @@ mod tests {
                     dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     MEMORY_BLOCK_SLICE_SIZE * 99,
+                    efi::MEMORY_WB,
                     efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
                 )
                 .unwrap();
@@ -5077,6 +5091,7 @@ mod tests {
                     address,
                     MEMORY_BLOCK_SLICE_SIZE,
                     efi::MEMORY_WB,
+                    efi::MEMORY_WB,
                 )
                 .unwrap();
             }
@@ -5126,6 +5141,7 @@ mod tests {
                     dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     MEMORY_BLOCK_SLICE_SIZE,
+                    efi::MEMORY_WB,
                     efi::MEMORY_WB,
                 )
                 .unwrap();
@@ -5388,6 +5404,7 @@ mod tests {
                     address,
                     MEMORY_BLOCK_SLICE_SIZE,
                     efi::MEMORY_WB,
+                    efi::MEMORY_WB,
                 )
                 .unwrap();
 
@@ -5433,6 +5450,7 @@ mod tests {
                     address,
                     MEMORY_BLOCK_SLICE_SIZE,
                     efi::MEMORY_WB,
+                    efi::MEMORY_WB,
                 )
                 .unwrap();
 
@@ -5472,6 +5490,7 @@ mod tests {
                     dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     MEMORY_BLOCK_SLICE_SIZE,
+                    efi::MEMORY_WB,
                     efi::MEMORY_WB,
                 )
                 .unwrap();

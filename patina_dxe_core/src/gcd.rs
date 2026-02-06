@@ -425,6 +425,8 @@ pub fn init_gcd(physical_hob_list: *const c_void) {
     let mut free_memory_size: u64 = 0;
     let mut memory_start: u64 = 0;
     let mut memory_end: u64 = 0;
+    let mut free_memory_attributes: u64 = 0;
+    let mut free_memory_capabilities: u64 = 0;
 
     let hob_list = Hob::Handoff(unsafe {
         (physical_hob_list as *const PhaseHandoffInformationTable)
@@ -443,6 +445,30 @@ pub fn init_gcd(physical_hob_list: *const c_void) {
             Hob::Cpu(cpu) => {
                 GCD.init(cpu.size_of_memory_space as u32, cpu.size_of_io_space as u32);
             }
+            Hob::ResourceDescriptorV2(_) | Hob::ResourceDescriptor(_) => {
+                debug_assert!(
+                    free_memory_start != 0,
+                    "The handoff HOB should come before any resource descriptor HOBs."
+                );
+
+                // Check if this is the resource descriptor for the free memory region, so that it can be used to initialize
+                // the GCD. The handoff HOB should always come first, so the free memory should always be found before the
+                // resource descriptor HOB.
+                if free_memory_start != 0
+                    && free_memory_attributes == 0
+                    && let Some((res_desc, cache_attributes)) = parse_resource_descriptor_hob(&hob)
+                    && res_desc.resource_type == hob::EFI_RESOURCE_SYSTEM_MEMORY
+                    && res_desc.physical_start <= free_memory_start
+                    && res_desc.physical_start.saturating_add(res_desc.resource_length)
+                        >= free_memory_start.saturating_add(free_memory_size)
+                {
+                    free_memory_attributes = cache_attributes.unwrap_or(0);
+                    free_memory_capabilities = spin_locked_gcd::get_capabilities(
+                        GcdMemoryType::SystemMemory,
+                        res_desc.resource_attribute as u64,
+                    );
+                }
+            }
             _ => (),
         }
     }
@@ -452,6 +478,8 @@ pub fn init_gcd(physical_hob_list: *const c_void) {
     log::info!("free_memory_start: {free_memory_start:#x?}");
     log::info!("free_memory_size: {free_memory_size:#x?}");
     log::info!("physical_hob_list: {:#x?}", physical_hob_list as u64);
+    log::info!("free_memory_attributes: {free_memory_attributes:#x?}");
+    log::info!("free_memory_capabilities: {free_memory_capabilities:#x?}");
 
     // make sure the PHIT is present and it was reasonable.
     assert!(free_memory_size > 0, "Not enough free memory for DXE core to start");
@@ -465,7 +493,8 @@ pub fn init_gcd(physical_hob_list: *const c_void) {
             GcdMemoryType::SystemMemory,
             free_memory_start as usize,
             free_memory_size as usize,
-            efi::MEMORY_ACCESS_MASK | efi::CACHE_ATTRIBUTE_MASK,
+            free_memory_attributes,
+            efi::MEMORY_ACCESS_MASK | free_memory_capabilities,
         )
         .expect("Failed to add initial region to GCD.");
     }
@@ -513,8 +542,8 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
     //Iterate over the hob list and map resource descriptor HOBs into the GCD.
     for hob in hob_list.iter() {
         let mut gcd_mem_type: GcdMemoryType = GcdMemoryType::NonExistent;
-        let mut resource_attributes: u32 = 0;
 
+        let mut resource_attributes: u32 = 0;
         // Only process Resource Descriptor HOBs according to the selected version
         let (res_desc, cache_attributes) = match parse_resource_descriptor_hob(hob) {
             Some((desc, Some(attrs))) => (desc, attrs),
@@ -994,6 +1023,7 @@ mod tests {
                     patina::pi::dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     spin_locked_gcd::MEMORY_BLOCK_SLICE_SIZE * 10,
+                    efi::MEMORY_WB,
                     efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
                 )
                 .unwrap();
