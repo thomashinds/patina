@@ -1178,6 +1178,14 @@ impl GCD {
                     && prev.attribute == current.attribute
                     && prev.physical_start + (prev.number_of_pages * UEFI_PAGE_SIZE as u64) == current.physical_start
                 {
+                    // Free memory shouldn't even need to be merged because it should already be consistent and coalesced.
+                    // If this fails to be true it can cause odd behavior if applications try to allocate blocks of free
+                    // memory by address, which is a common pattern for OS loaders.
+                    debug_assert!(
+                        prev.r#type != efi::CONVENTIONAL_MEMORY,
+                        "Free memory is fragmented in memory descriptors!"
+                    );
+
                     // Merge by extending the previous descriptor
                     prev.number_of_pages += current.number_of_pages;
                     continue;
