@@ -3308,6 +3308,8 @@ mod tests {
             )
         });
 
+        let hobs = hobs.leak();
+
         let mut hob_list = HobList::new();
         hob_list.discover_hobs(hobs.as_ptr() as *mut c_void);
 
