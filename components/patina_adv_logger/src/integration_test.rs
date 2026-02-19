@@ -17,7 +17,7 @@ use patina::{
 };
 use r_efi::efi;
 
-use crate::{memory_log, protocol::AdvancedLoggerProtocol};
+use crate::{memory_log, protocol::AdvancedLoggerProtocol, reader::AdvancedLogReader};
 
 #[coverage(off)]
 #[patina_test]
@@ -56,7 +56,7 @@ fn adv_logger_test(bs: StandardBootServices) -> patina::test::Result {
     // Check that the strings were added to the log.
     // SAFETY: We know this memory is safe and well structure as we just created it
     //         using the counterpart functions.
-    let log = unsafe { memory_log::AdvancedLog::adopt_memory_log(protocol.log_info) };
+    let log = unsafe { AdvancedLogReader::from_address(protocol.log_info) };
     u_assert!(log.is_some(), "adv_logger_test: Failed to adopt the memory log.");
     let log_info = log.unwrap();
     let mut direct_found = false;

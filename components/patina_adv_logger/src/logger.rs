@@ -9,7 +9,10 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use crate::memory_log::{self, AdvancedLog, LogEntry};
+use crate::{
+    memory_log::{self, LogEntry},
+    writer::AdvancedLogWriter,
+};
 use core::{ffi::c_void, marker::Send, ptr};
 use log::Level;
 use patina::{
@@ -35,7 +38,7 @@ where
     target_filters: &'a [(&'a str, log::LevelFilter)],
     max_level: log::LevelFilter,
     format: Format,
-    memory_log: RwLock<Option<AdvancedLog<'static>>>,
+    memory_log: RwLock<Option<AdvancedLogWriter>>,
     pub(crate) timer: Service<dyn ArchTimerFunctionality>,
 }
 
@@ -143,8 +146,8 @@ where
             }
         }
 
-        // SAFETY: The caller must ensure the address is valid for an AdvancedLog type.
-        if let Some(log) = unsafe { AdvancedLog::adopt_memory_log(address) } {
+        // SAFETY: The caller must ensure the address is valid for an AdvancedLogWriter type.
+        if let Some(log) = unsafe { AdvancedLogWriter::adopt_memory_log(address) } {
             let current_frequency = log.get_frequency();
 
             {
@@ -174,6 +177,7 @@ where
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn get_log_address(&self) -> Option<efi::PhysicalAddress> {
         let log_guard = self.memory_log.read();
         log_guard.as_ref().map(|log| log.get_address())
@@ -310,10 +314,7 @@ mod tests {
     };
     use r_efi::efi;
 
-    use crate::{
-        logger::AdvancedLogger,
-        memory_log::{self, AdvancedLog},
-    };
+    use crate::{logger::AdvancedLogger, memory_log, writer::AdvancedLogWriter};
 
     #[derive(IntoService)]
     #[service(dyn ArchTimerFunctionality)]
@@ -364,7 +365,7 @@ mod tests {
         // initialize the log so it's valid for the hob list
         //
         // SAFETY: We just allocated this memory so it's valid.
-        unsafe { AdvancedLog::initialize_memory_log(log_address, LOG_LEN as u32) };
+        unsafe { AdvancedLogWriter::initialize_memory_log(log_address, LOG_LEN as u32) };
 
         const HOB_LEN: usize = size_of::<GuidHob>() + size_of::<efi::PhysicalAddress>();
         let hob_buff = Box::into_raw(Box::new([0_u8; HOB_LEN]));
