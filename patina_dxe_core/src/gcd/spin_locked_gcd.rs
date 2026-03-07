@@ -2315,7 +2315,7 @@ impl SpinLockedGcd {
             .expect("Did not find MemoryAllocationModule Hob for DxeCore. Use patina::guid::DXE_CORE as FFS GUID.");
 
         let pe_info = unsafe {
-            UefiPeInfo::parse(core::slice::from_raw_parts(
+            UefiPeInfo::parse_mapped(core::slice::from_raw_parts(
                 dxe_core_hob.alloc_descriptor.memory_base_address as *const u8,
                 dxe_core_hob.alloc_descriptor.memory_length as usize,
             ))

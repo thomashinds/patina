@@ -597,7 +597,7 @@ impl ImageData {
             )
         };
 
-        let pe_info = UefiPeInfo::parse(dxe_core_image_buffer).expect("Failed to parse PE info for DXE Core");
+        let pe_info = UefiPeInfo::parse_mapped(dxe_core_image_buffer).expect("Failed to parse PE info for DXE Core");
 
         let private_image_data =
             PrivateImageData::new_from_static_image(image_info, dxe_core_image_buffer, entry_point, &pe_info);
@@ -3281,10 +3281,15 @@ mod tests {
 
     fn create_dxe_core_hob() -> HobList<'static> {
         let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
-        let mut image: Vec<u8> = Vec::new();
-        test_file.read_to_end(&mut image).expect("failed to read test file");
+        let mut raw_image: Vec<u8> = Vec::new();
+        test_file.read_to_end(&mut raw_image).expect("failed to read test file");
 
-        let image = Box::leak(image.into_boxed_slice());
+        // Map the PE sections to their virtual addresses so that parse_mapped() reads the loaded
+        // image in memory (as the DXE Core is expected to be loaded in memory by the DXE loader).
+        let pe_info = UefiPeInfo::parse(&raw_image).expect("failed to parse PE for mapping");
+        let mut mapped_image: Vec<u8> = vec![0u8; pe_info.size_of_image as usize];
+        crate::pecoff::load_image(&pe_info, &raw_image, &mut mapped_image).expect("failed to load/map PE image");
+        let image = Box::leak(mapped_image.into_boxed_slice());
 
         extern "efiapi" fn entry_point(_: *mut c_void, _: *mut efi::SystemTable) -> efi::Status {
             efi::Status::SUCCESS
