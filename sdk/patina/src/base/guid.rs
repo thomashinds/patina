@@ -212,7 +212,7 @@ impl BinaryGuid {
     }
 
     /// Create a BinaryGuid from a 16-byte array.
-    pub fn from_bytes(bytes: &[u8; 16]) -> Self {
+    pub const fn from_bytes(bytes: &[u8; 16]) -> Self {
         Self(efi::Guid::from_bytes(bytes))
     }
 
