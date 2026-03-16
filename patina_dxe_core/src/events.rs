@@ -135,6 +135,7 @@ extern "efiapi" fn wait_for_event(
                 status => {
                     // SAFETY: caller must ensure that out_index is a valid pointer if it is not null.
                     if !out_index.is_null() {
+                        // SAFETY: out_index is non-null and points to writable memory.
                         unsafe {
                             out_index.write_unaligned(index);
                         };
@@ -304,6 +305,7 @@ extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_
     match PROTOCOL_DB.locate_protocol(timer::PROTOCOL_GUID) {
         Ok(timer_arch_ptr) => {
             let timer_arch_ptr = timer_arch_ptr as *mut timer::Protocol;
+            // SAFETY: timer_arch_ptr was successfully returned from locate_protocol.
             let timer_arch = unsafe { &*(timer_arch_ptr) };
             (timer_arch.register_handler)(timer_arch_ptr, timer_tick);
             if let Err(status_err) = EVENT_DB.close_event(event) {
@@ -359,6 +361,7 @@ mod tests {
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| {
             test_support::init_test_logger();
+            // SAFETY: Test-only initialization of global services under the global lock.
             unsafe {
                 crate::test_support::init_test_gcd(None);
                 crate::test_support::reset_allocators();

@@ -630,6 +630,8 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         // SAFETY: caller must provide valid pointers for buffer_size and name_guid. They are null-checked above.
         let local_buffer_size = unsafe { buffer_size.read_unaligned() };
         // SAFETY: caller must provide valid pointers for buffer_size and name_guid. They are null-checked above.
+        // SAFETY: name_guid is checked to be non-null above. The caller must ensure
+        // that it points to a valid GUID (as per the C interface).
         let name = unsafe { name_guid.read_unaligned() };
 
         let this = Self::instance();
@@ -742,6 +744,8 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         // SAFETY: null-checks are at the start of the routine, but caller is required to guarantee that buffer_size and
         // buffer are valid.
         let mut local_buffer_size = unsafe { buffer_size.read_unaligned() };
+        // SAFETY: null-checks are at the start of the routine, but caller is required to guarantee that buffer_size and
+        // buffer are valid (as per the C interface).
         let mut local_buffer_ptr = unsafe { buffer.read_unaligned() };
 
         if local_buffer_ptr.is_null() {
@@ -1795,6 +1799,7 @@ mod tests {
         test_support::with_global_lock(|| {
             static CORE: MockCore = MockCore::new(CompositeSectionExtractor::new());
             CORE.override_instance();
+            // SAFETY: Initializes the test GCD state for this test scope only.
             unsafe { test_support::init_test_gcd(None) };
 
             let fv_interface = MockProtocolData::new_fv_protocol(parent_handle);

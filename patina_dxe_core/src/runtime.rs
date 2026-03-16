@@ -23,7 +23,9 @@ struct RuntimeData {
     runtime_events: LinkedList<runtime::EventEntry, &'static crate::allocator::UefiAllocatorWithFsb>,
 }
 
+// SAFETY: RuntimeData is only accessed behind the RUNTIME_DATA mutex.
 unsafe impl Sync for RuntimeData {}
+// SAFETY: RuntimeData is only accessed behind the RUNTIME_DATA mutex.
 unsafe impl Send for RuntimeData {}
 
 static RUNTIME_DATA: Mutex<RuntimeData> = Mutex::new(RuntimeData::new());
@@ -82,6 +84,7 @@ pub fn init_runtime_support() {
 pub fn finalize_runtime_support() {
     let data = RUNTIME_DATA.lock();
     if !data.runtime_arch_ptr.is_null() {
+        // SAFETY: runtime_arch_ptr is set from the runtime protocol and checked for null.
         unsafe { (*data.runtime_arch_ptr).at_runtime.store(true, core::sync::atomic::Ordering::Relaxed) };
     }
 }

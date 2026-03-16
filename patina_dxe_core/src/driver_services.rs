@@ -46,8 +46,9 @@ fn get_platform_driver_override_bindings(
         .locate_protocol(efi::protocols::platform_driver_override::PROTOCOL_GUID)
     {
         Err(_) => return Vec::new(),
+        // SAFETY: Checks locate_protocol return value to determine if pointer is valid. as_mut() is used for mutable
+        // access which will also check if the pointer is null before allowing access.
         Ok(protocol) => unsafe {
-            // SAFETY: locate_protocol guarantees that if `Ok` is returned, a valid pointer is encapsulated in it.
             (protocol as *mut efi::protocols::platform_driver_override::Protocol).as_mut().expect("bad protocol ptr")
         },
     };
@@ -289,9 +290,11 @@ fn core_connect_single_controller(
         return Ok(());
     }
 
-    // SAFETY: caller must ensure that the pointer contained in remaining_device_path is valid if it is Some(_).
     if let Some(device_path) = remaining_device_path
-        && unsafe { (device_path.read_unaligned()).r#type == efi::protocols::device_path::TYPE_END }
+        && {
+            // SAFETY: caller must ensure that the pointer contained in remaining_device_path is valid if it is Some(_).
+            unsafe { (device_path.read_unaligned()).r#type == efi::protocols::device_path::TYPE_END }
+        }
     {
         return Ok(());
     }

@@ -514,6 +514,7 @@ struct PendingFirmwareVolumeImage {
 impl PendingFirmwareVolumeImage {
     // authenticate the pending firmware volume via the Security Architectural Protocol
     fn evaluate_auth(&self) -> Result<(), EfiError> {
+        // SAFETY: locate_protocol returns a valid pointer when present. as_ref is used for shared access.
         let security_protocol = unsafe {
             match PROTOCOL_DB.locate_protocol(patina::pi::protocols::security::PROTOCOL_GUID) {
                 Ok(protocol) => (protocol as *mut patina::pi::protocols::security::Protocol)
@@ -600,6 +601,8 @@ impl DispatcherContext {
                     Ok(protocol) => protocol as *mut firmware_volume_block::Protocol,
                 };
 
+                // SAFETY: fvb_ptr was successfully returned from get_interface_for_handle and should point to a
+                // valid FVB protocol instance. The as_ref() call checks for null.
                 let fvb = unsafe {
                     fvb_ptr.as_ref().expect("get_interface_for_handle returned NULL ptr for FirmwareVolumeBlock")
                 };
@@ -673,6 +676,8 @@ impl DispatcherContext {
                             };
 
                             let mut filename_nodes_buf = Vec::<u8>::with_capacity(FILENAME_NODE_SIZE + END_NODE_SIZE); // 20 bytes (filename_node + GUID) + 4 bytes (end node)
+                            // SAFETY: filename_node is a local value. Its byte representation is valid for the size
+                            // of the struct
                             filename_nodes_buf.extend_from_slice(unsafe {
                                 core::slice::from_raw_parts(
                                     &filename_node as *const _ as *const u8,
@@ -683,6 +688,8 @@ impl DispatcherContext {
                             filename_nodes_buf.extend_from_slice(file_name.as_bytes());
 
                             // Copy filename_end_node into the buffer
+                            // SAFETY: filename_end_node is a local value. Its byte representation is valid for the
+                            // size of the struct
                             filename_nodes_buf.extend_from_slice(unsafe {
                                 core::slice::from_raw_parts(
                                     &filename_end_node as *const _ as *const u8,
@@ -778,6 +785,7 @@ impl DispatcherContext {
     }
 }
 
+// SAFETY: DispatcherContext is owned by the dispatcher and not shared across threads without synchronization.
 unsafe impl Send for DispatcherContext {}
 
 #[cfg(test)]
@@ -824,6 +832,7 @@ mod tests {
         F: Fn() + std::panic::RefUnwindSafe,
     {
         test_support::with_global_lock(|| {
+            // SAFETY: Test-only initialization of the protocol database occurs under the global lock.
             unsafe { test_support::init_test_protocol_db() };
             f();
         })
@@ -843,6 +852,7 @@ mod tests {
         _: *mut pi::protocols::firmware_volume_block::Protocol,
         addr: *mut u64,
     ) -> efi::Status {
+        // SAFETY: addr is provided by the caller and is expected to be valid for a single u64 write.
         unsafe { addr.write(0) };
         efi::Status::SUCCESS
     }
@@ -852,6 +862,7 @@ mod tests {
         _: *mut pi::protocols::firmware_volume_block::Protocol,
         addr: *mut u64,
     ) -> efi::Status {
+        // SAFETY: addr is provided by the caller and is expected to be valid for a single u64 write.
         unsafe { addr.write(GET_PHYSICAL_ADDRESS3_VALUE) };
         efi::Status::SUCCESS
     }
@@ -932,6 +943,7 @@ mod tests {
             assert_eq!(CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.len(), DRIVERS_IN_DXEFV);
         });
 
+        // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
         let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
     }
 
@@ -978,12 +990,14 @@ mod tests {
                 .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID)
                 .expect("Failed to get FVB protocol");
             let protocol = protocol as *mut firmware_volume_block::Protocol;
+            // SAFETY: protocol was retrieved from PROTOCOL_DB and remains valid for this test scope.
             unsafe { &mut *protocol }.get_physical_address = get_physical_address1;
 
             CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
             assert_eq!(CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.len(), 0);
         });
 
+        // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
         let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
     }
 
@@ -1014,12 +1028,14 @@ mod tests {
                 .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID)
                 .expect("Failed to get FVB protocol");
             let protocol = protocol as *mut firmware_volume_block::Protocol;
+            // SAFETY: protocol was retrieved from PROTOCOL_DB and remains valid for this test scope.
             unsafe { &mut *protocol }.get_physical_address = get_physical_address2;
 
             CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
             assert_eq!(CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.len(), 0);
         });
 
+        // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
         let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
     }
 
@@ -1038,6 +1054,7 @@ mod tests {
 
             // SAFETY: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let fv_phys_addr = fv_raw.expose_provenance() as u64;
+            // SAFETY: fv_raw is leaked for the duration of this test scope.
             let handle =
                 unsafe { CORE.pi_dispatcher.fv_data.lock().install_firmware_volume(fv_phys_addr, None).unwrap() };
 
@@ -1046,15 +1063,19 @@ mod tests {
                 .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID)
                 .expect("Failed to get FVB protocol");
             let protocol = protocol as *mut firmware_volume_block::Protocol;
+            // SAFETY: protocol was retrieved from PROTOCOL_DB and remains valid for this test scope.
             unsafe { &mut *protocol }.get_physical_address = get_physical_address3;
 
+            // SAFETY: Test-only mutable static is used under the global lock.
             unsafe { GET_PHYSICAL_ADDRESS3_VALUE = fv_phys_addr + 0x1000 };
             CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
+            // SAFETY: Reset the test-only mutable static under the global lock.
             unsafe { GET_PHYSICAL_ADDRESS3_VALUE = 0 };
 
             assert_eq!(CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.len(), 0);
         });
 
+        // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
         let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
     }
 
@@ -1084,6 +1105,7 @@ mod tests {
             assert_eq!(CORE.pi_dispatcher.dispatcher_context.lock().pending_firmware_volume_images.len(), 1);
         });
 
+        // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
         let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
     }
 
@@ -1114,6 +1136,7 @@ mod tests {
             CORE.pi_dispatcher.display_discovered_not_dispatched();
         });
 
+        // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
         let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
     }
 
@@ -1147,6 +1170,7 @@ mod tests {
             assert_eq!(CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.len(), DRIVERS_IN_DXEFV);
         });
 
+        // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
         let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
     }
 
@@ -1204,6 +1228,7 @@ mod tests {
             assert_eq!(result, Err(EfiError::NotFound));
         });
 
+        // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
         let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
     }
 
@@ -1238,6 +1263,7 @@ mod tests {
             assert_eq!(result, Err(EfiError::NotFound));
         });
 
+        // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
         let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
     }
 
@@ -1262,6 +1288,7 @@ mod tests {
                 assert!(!this.is_null());
                 assert_eq!(authentication_status, 0);
 
+                // SAFETY: `file` is a valid device path pointer provided by the dispatcher for this callback.
                 unsafe {
                     let mut node_walker = DevicePathWalker::new(file);
                     //outer FV of NESTEDFV.Fv does not have an extended header so expect MMAP device path.
@@ -1326,11 +1353,13 @@ mod tests {
             static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
             CORE.override_instance();
 
+            // SAFETY: fv_raw is leaked for the duration of this test scope.
             let _handle =
                 unsafe { CORE.pi_dispatcher.install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
 
             // Get the actual FV name GUID from the installed FV
             let actual_fv_guid = {
+                // SAFETY: fv_raw points to a valid FV buffer for parsing in this test.
                 let volume = unsafe { VolumeRef::new_from_address(fv_raw.expose_provenance() as u64).unwrap() };
                 volume.fv_name().expect("Test FV should have a name GUID")
             };
@@ -1355,6 +1384,7 @@ mod tests {
                 "Should return false for non-existent FV GUID"
             );
 
+            // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
             let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
         });
     }
@@ -1386,6 +1416,7 @@ mod tests {
             let fv = fv.into_boxed_slice();
             let fv_raw = Box::into_raw(fv);
 
+            // SAFETY: fv_raw is leaked for the duration of this test scope.
             let _handle =
                 unsafe { CORE.pi_dispatcher.install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
 
@@ -1402,6 +1433,7 @@ mod tests {
                 "Should return false when GUID doesn't match any installed FV"
             );
 
+            // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
             let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
         });
     }
@@ -1422,6 +1454,7 @@ mod tests {
             let fv_raw = Box::into_raw(fv);
 
             // Install the parent FV
+            // SAFETY: fv_raw is leaked for the duration of this test scope.
             let parent_handle =
                 unsafe { CORE.pi_dispatcher.install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
 
@@ -1445,6 +1478,7 @@ mod tests {
                 .expect("There should be a pending FV image"); // Extract and install the child FV separately to simulate it being already installed
             if let Some(section) = child_fv_sections.first() {
                 let child_fv_data = section.try_content_as_slice().expect("Should be able to get child FV data");
+                // SAFETY: child_fv_data points to a valid FV image buffer for parsing.
                 let child_volume = unsafe { VolumeRef::new_from_address(child_fv_data.as_ptr() as u64) }
                     .expect("Should be able to parse the child FV");
 
@@ -1452,6 +1486,7 @@ mod tests {
                     // Install the child FV directly
                     let child_fv_box: Box<[u8]> = Box::from(child_fv_data);
                     let child_fv_raw = Box::into_raw(child_fv_box);
+                    // SAFETY: child_fv_raw is leaked for the duration of this test scope.
                     let _child_handle = unsafe {
                         CORE.pi_dispatcher
                             .install_firmware_volume(child_fv_raw.expose_provenance() as u64, Some(parent_handle))
@@ -1478,10 +1513,12 @@ mod tests {
                         "Pending FV images should be empty after dispatch skipped duplicate"
                     );
 
+                    // SAFETY: child_fv_raw was created from Box::into_raw and is dropped only once here.
                     let _dropped_child = unsafe { Box::from_raw(child_fv_raw) };
                 }
             }
 
+            // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
             let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
         });
     }
@@ -1500,6 +1537,7 @@ mod tests {
             static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
             CORE.override_instance();
 
+            // SAFETY: fv_raw is leaked for the duration of this test scope.
             let handle =
                 unsafe { CORE.pi_dispatcher.install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
 
@@ -1533,6 +1571,7 @@ mod tests {
                 "Should return false when the FVB protocol is null"
             );
 
+            // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
             let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
         });
     }
@@ -1551,6 +1590,7 @@ mod tests {
             static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
             CORE.override_instance();
 
+            // SAFETY: fv_raw is leaked for the duration of this test scope.
             let handle =
                 unsafe { CORE.pi_dispatcher.install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
 
@@ -1559,6 +1599,7 @@ mod tests {
                 .expect("Failed to get FVB protocol");
             let protocol = protocol as *mut firmware_volume_block::Protocol;
             // Patch get_physical_address to return an error
+            // SAFETY: protocol was retrieved from PROTOCOL_DB and remains valid for this test scope.
             unsafe { &mut *protocol }.get_physical_address = get_physical_address1;
 
             let test_guid = r_efi::efi::Guid::from_fields(
@@ -1574,6 +1615,7 @@ mod tests {
                 "Should return false when get_physical_address fails"
             );
 
+            // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
             let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
         });
     }
@@ -1592,6 +1634,7 @@ mod tests {
             static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
             CORE.override_instance();
 
+            // SAFETY: fv_raw is leaked for the duration of this test scope.
             let handle =
                 unsafe { CORE.pi_dispatcher.install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
 
@@ -1600,6 +1643,7 @@ mod tests {
                 .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID)
                 .expect("Failed to get FVB protocol");
             let protocol = protocol as *mut firmware_volume_block::Protocol;
+            // SAFETY: protocol was retrieved from PROTOCOL_DB and remains valid for this test scope.
             unsafe { &mut *protocol }.get_physical_address = get_physical_address2;
 
             let test_guid = r_efi::efi::Guid::from_fields(
@@ -1615,6 +1659,7 @@ mod tests {
                 "Should return false when the address is zero"
             );
 
+            // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
             let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
         });
     }
@@ -1633,6 +1678,7 @@ mod tests {
             static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
             CORE.override_instance();
 
+            // SAFETY: fv_raw is leaked for the duration of this test scope.
             let handle =
                 unsafe { CORE.pi_dispatcher.install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
 
@@ -1646,9 +1692,11 @@ mod tests {
                 .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID)
                 .expect("Failed to get FVB protocol");
             let protocol = protocol as *mut firmware_volume_block::Protocol;
+            // SAFETY: protocol was retrieved from PROTOCOL_DB and remains valid for this test scope.
             unsafe { &mut *protocol }.get_physical_address = get_physical_address3;
 
             // Set to the address of the invalid FV data
+            // SAFETY: Test-only mutable static is used under the global lock.
             unsafe { GET_PHYSICAL_ADDRESS3_VALUE = invalid_fv_raw.expose_provenance() as u64 };
 
             let test_guid = r_efi::efi::Guid::from_fields(
@@ -1664,9 +1712,12 @@ mod tests {
                 "Should return false when volume parsing fails"
             );
 
+            // SAFETY: Reset the test-only mutable static under the global lock.
             unsafe { GET_PHYSICAL_ADDRESS3_VALUE = 0 };
 
+            // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
             let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
+            // SAFETY: invalid_fv_raw was created from Box::into_raw and is dropped only once here.
             let _dropped_invalid_fv = unsafe { Box::from_raw(invalid_fv_raw) };
         });
     }

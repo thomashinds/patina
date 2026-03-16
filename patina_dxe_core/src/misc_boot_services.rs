@@ -44,9 +44,9 @@ impl<T> ArchProtocolPtr<T> {
     }
 }
 
-// SAFETY: ArchProtocolPtr is Send/Sync because the pointer it wraps is initialized in a thread-safe manner (using
-// `Once`), and the pointer itself is never used to mutate data.
+// SAFETY: ArchProtocolPtr is Send because the pointer is initialized once and never mutates the pointed-to data.
 unsafe impl<T> Send for ArchProtocolPtr<T> {}
+// SAFETY: ArchProtocolPtr is Sync because the pointer is initialized once and never mutates the pointed-to data.
 unsafe impl<T> Sync for ArchProtocolPtr<T> {}
 
 static METRONOME_ARCH_PTR: ArchProtocolPtr<protocols::metronome::Protocol> = ArchProtocolPtr::new();
@@ -139,11 +139,11 @@ extern "efiapi" fn set_watchdog_timer(
 extern "efiapi" fn metronome_arch_available(event: efi::Event, _context: *mut c_void) {
     match PROTOCOL_DB.locate_protocol(protocols::metronome::PROTOCOL_GUID) {
         Ok(metronome_arch_ptr) => {
-            // SAFETY: metronome_arch_ptr is expected to be a valid pointer to the metronome protocol since it is
-            // associated with the metronome arch guid.
             if metronome_arch_ptr.is_null() {
                 panic!("Located metronome protocol pointer is null.");
             }
+            // SAFETY: metronome_arch_ptr is expected to be a valid pointer to the metronome protocol since it is
+            // associated with the metronome arch guid.
             unsafe { METRONOME_ARCH_PTR.init(metronome_arch_ptr) };
             if let Err(status_err) = EVENT_DB.close_event(event) {
                 log::warn!("Could not close event for metronome_arch_available due to error {status_err:?}");
@@ -159,11 +159,11 @@ extern "efiapi" fn metronome_arch_available(event: efi::Event, _context: *mut c_
 extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_void) {
     match PROTOCOL_DB.locate_protocol(protocols::watchdog::PROTOCOL_GUID) {
         Ok(watchdog_arch_ptr) => {
-            // SAFETY: watchdog_arch_ptr is expected to be a valid pointer to the watchdog protocol since it is
-            // associated with the watchdog arch guid.
             if watchdog_arch_ptr.is_null() {
                 panic!("Located watchdog protocol pointer is null.");
             }
+            // SAFETY: watchdog_arch_ptr is expected to be a valid pointer to the watchdog protocol since it is
+            // associated with the watchdog arch guid.
             unsafe { WATCHDOG_ARCH_PTR.init(watchdog_arch_ptr) };
             if let Err(status_err) = EVENT_DB.close_event(event) {
                 log::warn!("Could not close event for watchdog_arch_available due to error {status_err:?}");
@@ -191,6 +191,8 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     match PROTOCOL_DB.locate_protocol(protocols::timer::PROTOCOL_GUID) {
         Ok(timer_arch_ptr) => {
             let timer_arch_ptr = timer_arch_ptr as *mut protocols::timer::Protocol;
+            // SAFETY: timer_arch_ptr comes from locate_protocol and is considered valid based on the successful
+            // return status from locate_protocol.
             let timer_arch = unsafe { &*(timer_arch_ptr) };
             (timer_arch.set_timer_period)(timer_arch_ptr, 0);
         }
@@ -219,6 +221,8 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     match PROTOCOL_DB.locate_protocol(protocols::status_code::PROTOCOL_GUID) {
         Ok(status_code_ptr) => {
             let status_code_ptr = status_code_ptr as *mut protocols::status_code::Protocol;
+            // SAFETY: status_code_ptr comes from locate_protocol and is considered valid based on the successful
+            // return status from locate_protocol.
             let status_code_protocol = unsafe { &*(status_code_ptr) };
             (status_code_protocol.report_status_code)(
                 status_code::EFI_PROGRESS_CODE,
@@ -247,6 +251,8 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     match PROTOCOL_DB.locate_protocol(protocols::runtime::PROTOCOL_GUID) {
         Ok(rt_arch_ptr) => {
             let rt_arch_ptr = rt_arch_ptr as *mut protocols::runtime::Protocol;
+            // SAFETY: rt_arch_ptr comes from locate_protocol and is considered valid based on the successful
+            // return status from locate_protocol.
             let rt_arch_protocol = unsafe { &mut *(rt_arch_ptr) };
             rt_arch_protocol.at_runtime.store(true, Ordering::SeqCst);
         }
@@ -462,6 +468,7 @@ mod tests {
                 unimplemented!()
             }
             let watchdog = protocols::watchdog::Protocol { register_handler, set_timer_period, get_timer_period };
+            // SAFETY: The mock protocol lives for the duration of the test and the pointer is only used by the test.
             unsafe {
                 WATCHDOG_ARCH_PTR.init(&watchdog as *const _ as *mut c_void);
             };
@@ -521,6 +528,7 @@ mod tests {
                 wait_for_tick,
             };
 
+            // SAFETY: The mock protocol lives for the duration of the test and the pointer is only used by the test.
             unsafe {
                 METRONOME_ARCH_PTR.init(&metronome as *const _ as *mut c_void);
             }

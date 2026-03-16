@@ -175,7 +175,9 @@ impl PatinaPageTable for MockPageTable {
     }
 }
 
+// SAFETY: MockPageTable uses interior mutability for test-only state and is not shared across threads in tests.
 unsafe impl Send for MockPageTable {}
+// SAFETY: MockPageTable's interior mutability is confined to test usage where concurrent access is controlled.
 unsafe impl Sync for MockPageTable {}
 
 impl Default for MockPageTable {
