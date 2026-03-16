@@ -52,14 +52,18 @@ write a Patina component.
 
 ## Important Notes
 
-This repository is still considered to be in a "beta" stage at this time. Platform testing and integration feedback
-is very welcome.
+Content in the main branch of the patina repository is expected to be functionally stable with the following exception:
 
-Before making pull requests at a minimum, run:
+* Patina has optional pieces of functionality called "Patina components". While components are expected to adhere to
+the same standards of readiness as the rest of the repository, when evaluating a new component, consumers should
+verify that the component does not have special disclaimers or limitations noted in its documentation.
 
-```shell
-cargo make all
-```
+Also, be aware that Patina has other branches that may host work that is not yet ready for the main branch. To learn
+more about these branches and the overall Patina release process, read the
+[Patina Release Process](https://github.com/OpenDevicePartnership/patina/blob/main/docs/src/rfc/text/0015-patina-release-process.md)
+RFC.
+
+Platform testing and integration feedback is very welcome.
 
 ## Performing a Release
 
