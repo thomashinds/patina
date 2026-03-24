@@ -53,6 +53,7 @@ static LOGGER: AdvancedLogger<UartNull> = AdvancedLogger::new(
    &[("allocations", LevelFilter::Off)], // set custom log levels per module
    log::LevelFilter::Info, // Default log level
    UartNull { }, // Serial writer instance
+   &[], // Per-target hw_print_level overrides (empty = use global default)
 );
 
 struct ExamplePlatform;

@@ -40,6 +40,7 @@ where
     format: Format,
     memory_log: RwLock<Option<AdvancedLogWriter>>,
     pub(crate) timer: Service<dyn ArchTimerFunctionality>,
+    hw_target_filters: &'a [(&'a str, u32)],
 }
 
 impl<'a, S> AdvancedLogger<'a, S>
@@ -54,12 +55,16 @@ where
     /// * `target_filters` - A list of target filters to apply to the logger.
     /// * `max_level` - The maximum log level to log.
     /// * `hardware_port` - The hardware port to write logs to.
+    /// * `hw_target_filters` - Per-target overrides for the hardware print level bitmask.
+    ///   If a log record's target starts with the name, the associated bitmask is used
+    ///   instead of the hw_print_level from the memory log header. Use an empty slice for no overrides.
     ///
     pub const fn new(
         format: Format,
         target_filters: &'a [(&'a str, log::LevelFilter)],
         max_level: log::LevelFilter,
         hardware_port: S,
+        hw_target_filters: &'a [(&'a str, u32)],
     ) -> Self {
         Self {
             hardware_port,
@@ -68,6 +73,7 @@ where
             format,
             memory_log: RwLock::new(None),
             timer: Service::new_uninit(),
+            hw_target_filters,
         }
     }
 
@@ -116,12 +122,18 @@ where
     }
 
     /// Writes a log entry to the hardware port and memory log if available.
-    pub(crate) fn log_write(&self, error_level: u32, data: &[u8]) {
+    ///
+    /// `hw_print_mask_override` optionally overrides the global hw_print_level
+    /// from the memory log header, enabling per-target hardware print filtering.
+    pub(crate) fn log_write(&self, error_level: u32, hw_print_mask_override: Option<u32>, data: &[u8]) {
         self.refresh_log_info_address();
         let mut hw_write = true;
         let log_guard = self.memory_log.read();
         if let Some(memory_log) = log_guard.as_ref() {
-            hw_write = memory_log.hardware_write_enabled(error_level);
+            hw_write = match hw_print_mask_override {
+                Some(mask) => memory_log.hardware_write_enabled_with_mask(error_level, mask),
+                None => memory_log.hardware_write_enabled(error_level),
+            };
             let timestamp = self.timer.map_or(0, |timer| timer.cpu_count());
             let _ = memory_log.add_log_entry(LogEntry {
                 phase: memory_log::ADVANCED_LOGGER_PHASE_DXE,
@@ -198,6 +210,11 @@ where
             self.set_log_info_address(new_address);
         }
     }
+
+    /// Returns the per-target hardware print mask override for the given target, if any.
+    fn hw_print_mask_override(&self, target: &str) -> Option<u32> {
+        self.hw_target_filters.iter().find(|(name, _)| target.starts_with(name)).map(|(_, mask)| *mask)
+    }
 }
 
 impl<S> log::Log for AdvancedLogger<'_, S>
@@ -217,7 +234,8 @@ where
     fn log(&self, record: &log::Record) {
         if self.enabled(record.metadata()) {
             let level = log_level_to_debug_level(record.metadata().level());
-            let mut writer = BufferedWriter::new(level, self);
+            let hw_print_mask_override = self.hw_print_mask_override(record.target());
+            let mut writer = BufferedWriter::new(level, hw_print_mask_override, self);
             self.format.write(&mut writer, record);
             writer.flush();
         }
@@ -248,6 +266,7 @@ where
     S: SerialIO + Send,
 {
     level: u32,
+    hw_print_mask_override: Option<u32>,
     writer: &'a AdvancedLogger<'a, S>,
     buffer: [u8; WRITER_BUFFER_SIZE],
     buffer_size: usize,
@@ -257,9 +276,9 @@ impl<'a, S> BufferedWriter<'a, S>
 where
     S: SerialIO + Send,
 {
-    /// Creates a new BufferedWriter with the specified log level and writer.
-    const fn new(level: u32, writer: &'a AdvancedLogger<'a, S>) -> Self {
-        Self { level, writer, buffer: [0; WRITER_BUFFER_SIZE], buffer_size: 0 }
+    /// Creates a new BufferedWriter with the specified log level, optional hardware print mask override, and writer.
+    const fn new(level: u32, hw_print_mask_override: Option<u32>, writer: &'a AdvancedLogger<'a, S>) -> Self {
+        Self { level, hw_print_mask_override, writer, buffer: [0; WRITER_BUFFER_SIZE], buffer_size: 0 }
     }
 
     /// Flushes the current buffer to the underlying writer.
@@ -269,7 +288,7 @@ where
         }
 
         let data = &self.buffer[0..self.buffer_size];
-        self.writer.log_write(self.level, data);
+        self.writer.log_write(self.level, self.hw_print_mask_override, data);
         self.buffer_size = 0;
     }
 }
@@ -293,7 +312,7 @@ where
         } else {
             // this message is too big to buffer, flush then write the message.
             self.flush();
-            self.writer.log_write(self.level, data);
+            self.writer.log_write(self.level, self.hw_print_mask_override, data);
         }
 
         Ok(())
@@ -337,6 +356,7 @@ mod tests {
             &[("test_target", log::LevelFilter::Info)],
             log::LevelFilter::Debug,
             serial,
+            &[],
         );
         assert!(logger_uninit.timer.map_or(0, |timer| timer.cpu_count()) == 0);
     }
@@ -349,13 +369,14 @@ mod tests {
             &[("test_target", log::LevelFilter::Info)],
             log::LevelFilter::Debug,
             serial,
+            &[],
         );
         logger_uninit.init_timer(patina::component::service::Service::mock(Box::new(MockTimer {})));
         assert!(logger_uninit.timer.cpu_count() > 0);
     }
 
     static TEST_LOGGER: AdvancedLogger<UartNull> =
-        AdvancedLogger::new(patina::log::Format::Standard, &[], log::LevelFilter::Trace, UartNull {});
+        AdvancedLogger::new(patina::log::Format::Standard, &[], log::LevelFilter::Trace, UartNull {}, &[]);
 
     fn create_adv_logger_hob_list() -> (u64, *const c_void) {
         const LOG_LEN: usize = 0x2000;

@@ -57,7 +57,8 @@ static LOGGER: AdvancedLogger<UartNull> = AdvancedLogger::new(
     Format::Standard,
     &[],
     LevelFilter::Debug,
-    UartNull {}
+    UartNull {},
+    &[],
 );
 
 unsafe { LOGGER.init(hob_list).unwrap() };
@@ -81,7 +82,8 @@ Consider replacing it with `match` and returning a `Result`:
 #     Format::Standard,
 #     &[],
 #     LevelFilter::Debug,
-#     UartNull {}
+#     UartNull {},
+#     &[],
 # );
 match unsafe { LOGGER.init(hob_list) } {
     Ok(()) => {},
