@@ -13,6 +13,10 @@
 //!
 
 use clap::Parser;
+use patina_adv_logger::parser::{
+    ALOG_SIGNATURE, FIELD_OFFSET_LOG_BUFFER_OFFSET, FIELD_OFFSET_LOG_BUFFER_SIZE, FIELD_OFFSET_LOG_CURRENT_OFFSET,
+    FIELD_OFFSET_VERSION, HEADER_SIZE_V5, HEADER_SIZE_V6, VERSION_V5, VERSION_V6,
+};
 use std::{
     fs::File,
     io::{self, Read, Seek, SeekFrom, Write},
@@ -20,20 +24,11 @@ use std::{
     time::Instant,
 };
 
-/// ALOG signature bytes (little-endian representation of 0x474F4C41).
-const ALOG_SIGNATURE_BYTES: [u8; 4] = [0x41, 0x4C, 0x4F, 0x47];
-
 /// Report scanning progress every 100 MB.
 const PROGRESS_INTERVAL: u64 = 100 * 1024 * 1024;
 
 /// Maximum log size we will attempt to read from a candidate (256 MB).
 const MAX_LOG_READ_SIZE: u64 = 256 * 1024 * 1024;
-
-// Field byte-offsets within the repr(C) AdvLoggerInfoV5 structure.
-const FIELD_OFFSET_VERSION: usize = 4;
-const FIELD_OFFSET_LOG_BUFFER_OFFSET: usize = 12;
-const FIELD_OFFSET_LOG_CURRENT_OFFSET: usize = 20;
-const FIELD_OFFSET_LOG_BUFFER_SIZE: usize = 28;
 
 /// Minimum bytes to peek at in order to inspect all header fields we need.
 const HEADER_PEEK_SIZE: usize = 128;
@@ -177,7 +172,7 @@ fn scan_memory_dump(args: &Args) -> io::Result<()> {
 /// Find all 4-byte-aligned ALOG signatures by reading the file in chunks.
 fn find_alog_candidates_chunked(file: &mut File, file_size: u64) -> io::Result<Vec<u64>> {
     let mut candidates = Vec::new();
-    let signature = u32::from_le_bytes(ALOG_SIGNATURE_BYTES);
+    let signature = ALOG_SIGNATURE;
     let mut buf = vec![0u8; SCAN_CHUNK_SIZE];
     let mut file_offset: u64 = 0;
     let mut next_progress: u64 = PROGRESS_INTERVAL;
@@ -286,8 +281,8 @@ fn try_parse_log_at_file<W: Write>(
     );
 
     let min_header_size: u32 = match version {
-        5 => 80,
-        6 => 88,
+        VERSION_V5 => HEADER_SIZE_V5 as u32,
+        VERSION_V6 => HEADER_SIZE_V6 as u32,
         v => return Err(io::Error::new(io::ErrorKind::InvalidData, format!("Unsupported log version: {v}"))),
     };
 

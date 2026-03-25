@@ -7,10 +7,36 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use crate::{memory_log::LogEntry, reader::AdvancedLogReader};
+use crate::memory_log::{self, AdvLoggerInfoV5, AdvLoggerInfoV6, LogEntry};
 use alloc::format;
-use core::str;
+use core::{mem::{offset_of, size_of}, str};
 use patina::error::EfiError;
+
+use crate::reader::AdvancedLogReader;
+
+// Advanced logger header layout constants (for memory-dump scanning)
+
+/// The ALOG signature value.
+pub const ALOG_SIGNATURE: u32 = memory_log::AdvLoggerInfo::SIGNATURE;
+
+/// Byte offset of the `version` field within the AdvLoggerInfo header.
+pub const FIELD_OFFSET_VERSION: usize = offset_of!(AdvLoggerInfoV5, version);
+/// Byte offset of the `log_buffer_offset` field within the AdvLoggerInfo header.
+pub const FIELD_OFFSET_LOG_BUFFER_OFFSET: usize = offset_of!(AdvLoggerInfoV5, log_buffer_offset);
+/// Byte offset of the `log_current_offset` field within the AdvLoggerInfo header.
+pub const FIELD_OFFSET_LOG_CURRENT_OFFSET: usize = offset_of!(AdvLoggerInfoV5, log_current_offset);
+/// Byte offset of the `log_buffer_size` field within the AdvLoggerInfo header.
+pub const FIELD_OFFSET_LOG_BUFFER_SIZE: usize = offset_of!(AdvLoggerInfoV5, log_buffer_size);
+
+/// Size of the V5 header in bytes.
+pub const HEADER_SIZE_V5: usize = size_of::<AdvLoggerInfoV5>();
+/// Size of the V6 header in bytes.
+pub const HEADER_SIZE_V6: usize = size_of::<AdvLoggerInfoV6>();
+
+/// Version number for the V5 log format.
+pub const VERSION_V5: u16 = memory_log::ADV_LOGGER_INFO_VERSION_V5;
+/// Version number for the V6 log format.
+pub const VERSION_V6: u16 = memory_log::ADV_LOGGER_INFO_VERSION_V6;
 
 /// Parser for the Advanced Logger buffer.
 pub struct Parser<'a> {
