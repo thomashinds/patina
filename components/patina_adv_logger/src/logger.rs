@@ -13,6 +13,7 @@ use crate::{
     memory_log::{self, LogEntry},
     writer::AdvancedLogWriter,
 };
+
 use core::{ffi::c_void, marker::Send, ptr};
 use log::Level;
 use patina::{
@@ -24,10 +25,26 @@ use patina::{
 };
 use r_efi::efi;
 use spin::RwLock;
+// Re-export debug level constants so callers can compose hw_level_override bitmasks.
+pub use crate::memory_log::{DEBUG_LEVEL_ERROR, DEBUG_LEVEL_INFO, DEBUG_LEVEL_VERBOSE, DEBUG_LEVEL_WARNING};
 
 // Exists for the debugger to find the log buffer.
 #[used]
 static mut DBG_ADV_LOG_BUFFER: u64 = 0;
+
+/// Per-target filter that binds a target name prefix with its log level and optional hardware print mask.
+pub struct TargetFilter<'a> {
+    /// Target name prefix to match.
+    pub target: &'a str,
+    /// Maximum log level for this target. Messages above this are dropped entirely.
+    pub log_level: log::LevelFilter,
+    /// Optional override for the hardware print level bitmask.
+    /// - `None` = use global `hw_print_level` from memory log header.
+    /// - `Some(mask)` = use this bitmask instead. Compose from
+    ///   [`DEBUG_LEVEL_ERROR`], [`DEBUG_LEVEL_WARNING`],
+    ///   [`DEBUG_LEVEL_INFO`], and [`DEBUG_LEVEL_VERBOSE`].
+    pub hw_mask_override: Option<u32>,
+}
 
 /// The logger for memory/hardware port logging.
 pub struct AdvancedLogger<'a, S>
@@ -35,12 +52,11 @@ where
     S: SerialIO + Send,
 {
     hardware_port: S,
-    target_filters: &'a [(&'a str, log::LevelFilter)],
+    target_filters: &'a [TargetFilter<'a>],
     max_level: log::LevelFilter,
     format: Format,
     memory_log: RwLock<Option<AdvancedLogWriter>>,
     pub(crate) timer: Service<dyn ArchTimerFunctionality>,
-    hw_target_filters: &'a [(&'a str, u32)],
 }
 
 impl<'a, S> AdvancedLogger<'a, S>
@@ -52,19 +68,15 @@ where
     /// ## Arguments
     ///
     /// * `format` - The format to use for logging.
-    /// * `target_filters` - A list of target filters to apply to the logger.
+    /// * `target_filters` - Per-target filters that control log level and optionally the hardware print mask.
     /// * `max_level` - The maximum log level to log.
     /// * `hardware_port` - The hardware port to write logs to.
-    /// * `hw_target_filters` - Per-target overrides for the hardware print level bitmask.
-    ///   If a log record's target starts with the name, the associated bitmask is used
-    ///   instead of the hw_print_level from the memory log header. Use an empty slice for no overrides.
     ///
     pub const fn new(
         format: Format,
-        target_filters: &'a [(&'a str, log::LevelFilter)],
+        target_filters: &'a [TargetFilter<'a>],
         max_level: log::LevelFilter,
         hardware_port: S,
-        hw_target_filters: &'a [(&'a str, u32)],
     ) -> Self {
         Self {
             hardware_port,
@@ -73,7 +85,6 @@ where
             format,
             memory_log: RwLock::new(None),
             timer: Service::new_uninit(),
-            hw_target_filters,
         }
     }
 
@@ -211,9 +222,9 @@ where
         }
     }
 
-    /// Returns the per-target hardware print mask override for the given target, if any.
-    fn hw_print_mask_override(&self, target: &str) -> Option<u32> {
-        self.hw_target_filters.iter().find(|(name, _)| target.starts_with(name)).map(|(_, mask)| *mask)
+    /// Returns the matching target filter for the given target name, if any.
+    fn target_filter(&self, target: &str) -> Option<&TargetFilter<'a>> {
+        self.target_filters.iter().find(|f| target.starts_with(f.target))
     }
 }
 
@@ -222,19 +233,17 @@ where
     S: SerialIO + Send,
 {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
-        metadata.level().to_level_filter()
-            <= *self
-                .target_filters
-                .iter()
-                .find(|(name, _)| metadata.target().starts_with(name))
-                .map(|(_, level)| level)
-                .unwrap_or(&self.max_level)
+        let max_level = self.target_filter(metadata.target()).map(|f| f.log_level).unwrap_or(self.max_level);
+        metadata.level().to_level_filter() <= max_level
     }
 
     fn log(&self, record: &log::Record) {
-        if self.enabled(record.metadata()) {
+        let filter = self.target_filter(record.target());
+        let max_level = filter.map(|f| f.log_level).unwrap_or(self.max_level);
+
+        if record.metadata().level().to_level_filter() <= max_level {
             let level = log_level_to_debug_level(record.metadata().level());
-            let hw_print_mask_override = self.hw_print_mask_override(record.target());
+            let hw_print_mask_override = filter.and_then(|f| f.hw_mask_override);
             let mut writer = BufferedWriter::new(level, hw_print_mask_override, self);
             self.format.write(&mut writer, record);
             writer.flush();
@@ -333,7 +342,11 @@ mod tests {
     };
     use r_efi::efi;
 
-    use crate::{logger::AdvancedLogger, memory_log, writer::AdvancedLogWriter};
+    use crate::{
+        logger::{AdvancedLogger, TargetFilter},
+        memory_log,
+        writer::AdvancedLogWriter,
+    };
 
     #[derive(IntoService)]
     #[service(dyn ArchTimerFunctionality)]
@@ -353,10 +366,9 @@ mod tests {
         let serial = UartNull {};
         let logger_uninit = AdvancedLogger::<UartNull>::new(
             Format::Standard,
-            &[("test_target", log::LevelFilter::Info)],
+            &[TargetFilter { target: "test_target", log_level: log::LevelFilter::Info, hw_mask_override: None }],
             log::LevelFilter::Debug,
             serial,
-            &[],
         );
         assert!(logger_uninit.timer.map_or(0, |timer| timer.cpu_count()) == 0);
     }
@@ -366,17 +378,16 @@ mod tests {
         let serial = UartNull {};
         let logger_uninit = AdvancedLogger::<UartNull>::new(
             Format::Standard,
-            &[("test_target", log::LevelFilter::Info)],
+            &[TargetFilter { target: "test_target", log_level: log::LevelFilter::Info, hw_mask_override: None }],
             log::LevelFilter::Debug,
             serial,
-            &[],
         );
         logger_uninit.init_timer(patina::component::service::Service::mock(Box::new(MockTimer {})));
         assert!(logger_uninit.timer.cpu_count() > 0);
     }
 
     static TEST_LOGGER: AdvancedLogger<UartNull> =
-        AdvancedLogger::new(patina::log::Format::Standard, &[], log::LevelFilter::Trace, UartNull {}, &[]);
+        AdvancedLogger::new(patina::log::Format::Standard, &[], log::LevelFilter::Trace, UartNull {});
 
     fn create_adv_logger_hob_list() -> (u64, *const c_void) {
         const LOG_LEN: usize = 0x2000;
