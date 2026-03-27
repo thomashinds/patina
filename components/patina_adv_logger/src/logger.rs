@@ -13,7 +13,6 @@ use crate::{
     memory_log::{self, LogEntry},
     writer::AdvancedLogWriter,
 };
-
 use core::{ffi::c_void, marker::Send, ptr};
 use log::Level;
 use patina::{
