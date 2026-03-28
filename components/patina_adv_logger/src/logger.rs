@@ -333,6 +333,7 @@ mod tests {
     use core::{ffi::c_void, ptr};
 
     use alloc::boxed::Box;
+    use log::Log;
     use patina::{
         component::service::{IntoService, perf_timer::ArchTimerFunctionality},
         log::Format,
@@ -431,5 +432,87 @@ mod tests {
         assert!(TEST_LOGGER.get_log_address().is_some_and(|addr| addr == log_address));
 
         // TODO: Need to mock the protocol interface but requires final component interface.
+    }
+
+    // Helper to build Metadata for a given target and level.
+    fn metadata(target: &str, level: log::Level) -> log::Metadata<'_> {
+        log::Metadata::builder().target(target).level(level).build()
+    }
+
+    // === Global level filtering (no target filters) ===
+
+    #[test]
+    fn enabled_respects_global_max_level() {
+        let logger = AdvancedLogger::new(Format::Standard, &[], log::LevelFilter::Info, UartNull {});
+
+        assert!(logger.enabled(&metadata("any", log::Level::Error)));
+        assert!(logger.enabled(&metadata("any", log::Level::Warn)));
+        assert!(logger.enabled(&metadata("any", log::Level::Info)));
+        assert!(!logger.enabled(&metadata("any", log::Level::Debug)));
+        assert!(!logger.enabled(&metadata("any", log::Level::Trace)));
+    }
+
+    #[test]
+    fn enabled_at_trace_allows_everything() {
+        let logger = AdvancedLogger::new(Format::Standard, &[], log::LevelFilter::Trace, UartNull {});
+
+        assert!(logger.enabled(&metadata("x", log::Level::Error)));
+        assert!(logger.enabled(&metadata("x", log::Level::Warn)));
+        assert!(logger.enabled(&metadata("x", log::Level::Info)));
+        assert!(logger.enabled(&metadata("x", log::Level::Debug)));
+        assert!(logger.enabled(&metadata("x", log::Level::Trace)));
+    }
+
+    #[test]
+    fn enabled_at_off_blocks_everything() {
+        let logger = AdvancedLogger::new(Format::Standard, &[], log::LevelFilter::Off, UartNull {});
+
+        assert!(!logger.enabled(&metadata("x", log::Level::Error)));
+        assert!(!logger.enabled(&metadata("x", log::Level::Trace)));
+    }
+
+    // === Target filter level overrides ===
+
+    #[test]
+    fn target_filter_overrides_global_to_be_more_permissive() {
+        let filters = [TargetFilter { target: "my_mod", log_level: log::LevelFilter::Info, hw_mask_override: None }];
+        let logger = AdvancedLogger::new(Format::Standard, &filters, log::LevelFilter::Error, UartNull {});
+
+        // Matching target uses the filter's level (Info)
+        assert!(logger.enabled(&metadata("my_mod", log::Level::Info)));
+        assert!(logger.enabled(&metadata("my_mod", log::Level::Error)));
+        assert!(!logger.enabled(&metadata("my_mod", log::Level::Debug)));
+
+        // Non-matching target falls back to global (Error)
+        assert!(!logger.enabled(&metadata("other", log::Level::Info)));
+        assert!(logger.enabled(&metadata("other", log::Level::Error)));
+    }
+
+    #[test]
+    fn target_filter_restricts_below_global() {
+        let filters = [TargetFilter { target: "noisy", log_level: log::LevelFilter::Error, hw_mask_override: None }];
+        let logger = AdvancedLogger::new(Format::Standard, &filters, log::LevelFilter::Trace, UartNull {});
+
+        // "noisy" target is restricted to Error only
+        assert!(!logger.enabled(&metadata("noisy", log::Level::Info)));
+        assert!(!logger.enabled(&metadata("noisy", log::Level::Warn)));
+        assert!(logger.enabled(&metadata("noisy", log::Level::Error)));
+
+        // Other targets use global Trace (everything passes)
+        assert!(logger.enabled(&metadata("other", log::Level::Trace)));
+    }
+
+    #[test]
+    fn target_filter_matches_by_prefix() {
+        let filters = [TargetFilter { target: "my_crate", log_level: log::LevelFilter::Info, hw_mask_override: None }];
+        // Global is Off so anything not matching the filter is blocked.
+        let logger = AdvancedLogger::new(Format::Standard, &filters, log::LevelFilter::Off, UartNull {});
+
+        // Prefix match
+        assert!(logger.enabled(&metadata("my_crate::submod", log::Level::Info)));
+        // Exact match (also a valid prefix)
+        assert!(logger.enabled(&metadata("my_crate", log::Level::Info)));
+        // No match → falls to global Off
+        assert!(!logger.enabled(&metadata("other_crate", log::Level::Error)));
     }
 }
