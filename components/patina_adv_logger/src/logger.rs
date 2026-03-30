@@ -24,8 +24,6 @@ use patina::{
 };
 use r_efi::efi;
 use spin::RwLock;
-// Re-export debug level constants so callers can compose hw_level_override bitmasks.
-pub use crate::memory_log::{DEBUG_LEVEL_ERROR, DEBUG_LEVEL_INFO, DEBUG_LEVEL_VERBOSE, DEBUG_LEVEL_WARNING};
 
 // Exists for the debugger to find the log buffer.
 #[used]
@@ -39,10 +37,9 @@ pub struct TargetFilter<'a> {
     pub log_level: log::LevelFilter,
     /// Optional override for the hardware print level bitmask.
     /// - `None` = use global `hw_print_level` from memory log header.
-    /// - `Some(mask)` = use this bitmask instead. Compose from
-    ///   [`DEBUG_LEVEL_ERROR`], [`DEBUG_LEVEL_WARNING`],
-    ///   [`DEBUG_LEVEL_INFO`], and [`DEBUG_LEVEL_VERBOSE`].
-    pub hw_mask_override: Option<u32>,
+    /// - `Some(level_filter)` Use the provided level filter to control
+    /// hardware printing for this target, instead of the global `hw_print_level`.
+    pub hw_mask_override: Option<log::LevelFilter>,
 }
 
 /// The logger for memory/hardware port logging.
@@ -242,7 +239,7 @@ where
 
         if record.metadata().level().to_level_filter() <= max_level {
             let level = log_level_to_debug_level(record.metadata().level());
-            let hw_print_mask_override = filter.and_then(|f| f.hw_mask_override);
+            let hw_print_mask_override = filter.and_then(|f| f.hw_mask_override).map(log_level_filter_to_debug_mask);
             let mut writer = BufferedWriter::new(level, hw_print_mask_override, self);
             self.format.write(&mut writer, record);
             writer.flush();
@@ -262,6 +259,24 @@ const fn log_level_to_debug_level(level: Level) -> u32 {
         Level::Info => memory_log::DEBUG_LEVEL_INFO,
         Level::Trace => memory_log::DEBUG_LEVEL_VERBOSE,
         Level::Debug => memory_log::DEBUG_LEVEL_INFO,
+    }
+}
+
+/// Converts a log::LevelFilter to a hardware print mask
+const fn log_level_filter_to_debug_mask(level_filter: log::LevelFilter) -> u32 {
+    match level_filter {
+        log::LevelFilter::Error => memory_log::DEBUG_LEVEL_ERROR,
+        log::LevelFilter::Warn => memory_log::DEBUG_LEVEL_ERROR | memory_log::DEBUG_LEVEL_WARNING,
+        log::LevelFilter::Info => {
+            memory_log::DEBUG_LEVEL_ERROR | memory_log::DEBUG_LEVEL_WARNING | memory_log::DEBUG_LEVEL_INFO
+        }
+        log::LevelFilter::Debug | log::LevelFilter::Trace => {
+            memory_log::DEBUG_LEVEL_ERROR
+                | memory_log::DEBUG_LEVEL_WARNING
+                | memory_log::DEBUG_LEVEL_INFO
+                | memory_log::DEBUG_LEVEL_VERBOSE
+        }
+        log::LevelFilter::Off => 0,
     }
 }
 
