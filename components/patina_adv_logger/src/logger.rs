@@ -38,8 +38,8 @@ pub struct TargetFilter<'a> {
     /// Optional override for the hardware print level for this target. Messages above this level will not be printed
     /// to the hardware port, but may still be logged to the memory log based on log_level and the overall max_level.
     /// - `None` = use global `hw_print_level` from memory log header.
-    /// - `Some(level_filter)` Use the provided level filter to control hardware printing for this target, instead 
-    /// of the global `hw_print_level`.
+    /// - `Some(level_filter)` Use the provided level filter to control hardware printing for this target, instead
+    ///   of the global `hw_print_level`.
     pub hw_filter_override: Option<log::LevelFilter>,
 }
 
