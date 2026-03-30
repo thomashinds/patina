@@ -50,7 +50,7 @@ use core::ffi::c_void;
 
 static LOGGER: AdvancedLogger<UartNull> = AdvancedLogger::new(
    Format::Standard, // How logs are formatted
-   &[TargetFilter { target: "allocations", log_level: LevelFilter::Off, hw_mask_override: None }], // set custom log levels per module
+   &[TargetFilter { target: "allocations", log_level: LevelFilter::Off, hw_filter_override: None }], // set custom log levels per module
    log::LevelFilter::Info, // Default log level
    UartNull { }, // Serial writer instance
 );

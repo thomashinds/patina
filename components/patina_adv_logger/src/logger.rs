@@ -29,17 +29,18 @@ use spin::RwLock;
 #[used]
 static mut DBG_ADV_LOG_BUFFER: u64 = 0;
 
-/// Per-target filter that binds a target name prefix with its log level and optional hardware print mask.
+/// Per-target filter that binds a target name prefix with its log level and optional hardware print level override.
 pub struct TargetFilter<'a> {
     /// Target name prefix to match.
     pub target: &'a str,
     /// Maximum log level for this target. Messages above this are dropped entirely.
     pub log_level: log::LevelFilter,
-    /// Optional override for the hardware print level bitmask.
+    /// Optional override for the hardware print level for this target. Messages above this level will not be printed
+    /// to the hardware port, but may still be logged to the memory log based on log_level and the overall max_level.
     /// - `None` = use global `hw_print_level` from memory log header.
-    /// - `Some(level_filter)` Use the provided level filter to control
-    /// hardware printing for this target, instead of the global `hw_print_level`.
-    pub hw_mask_override: Option<log::LevelFilter>,
+    /// - `Some(level_filter)` Use the provided level filter to control hardware printing for this target, instead 
+    /// of the global `hw_print_level`.
+    pub hw_filter_override: Option<log::LevelFilter>,
 }
 
 /// The logger for memory/hardware port logging.
@@ -64,7 +65,7 @@ where
     /// ## Arguments
     ///
     /// * `format` - The format to use for logging.
-    /// * `target_filters` - Per-target filters that control log level and optionally the hardware print mask.
+    /// * `target_filters` - Per-target filters that control log level and optionally the hardware print filter.
     /// * `max_level` - The maximum log level to log.
     /// * `hardware_port` - The hardware port to write logs to.
     ///
@@ -239,7 +240,7 @@ where
 
         if record.metadata().level().to_level_filter() <= max_level {
             let level = log_level_to_debug_level(record.metadata().level());
-            let hw_print_mask_override = filter.and_then(|f| f.hw_mask_override).map(log_level_filter_to_debug_mask);
+            let hw_print_mask_override = filter.and_then(|f| f.hw_filter_override).map(log_level_filter_to_debug_mask);
             let mut writer = BufferedWriter::new(level, hw_print_mask_override, self);
             self.format.write(&mut writer, record);
             writer.flush();
@@ -262,7 +263,7 @@ const fn log_level_to_debug_level(level: Level) -> u32 {
     }
 }
 
-/// Converts a log::LevelFilter to a hardware print mask
+/// Converts a `log::LevelFilter` to a hardware print mask.
 const fn log_level_filter_to_debug_mask(level_filter: log::LevelFilter) -> u32 {
     match level_filter {
         log::LevelFilter::Error => memory_log::DEBUG_LEVEL_ERROR,
@@ -381,7 +382,7 @@ mod tests {
         let serial = UartNull {};
         let logger_uninit = AdvancedLogger::<UartNull>::new(
             Format::Standard,
-            &[TargetFilter { target: "test_target", log_level: log::LevelFilter::Info, hw_mask_override: None }],
+            &[TargetFilter { target: "test_target", log_level: log::LevelFilter::Info, hw_filter_override: None }],
             log::LevelFilter::Debug,
             serial,
         );
@@ -393,7 +394,7 @@ mod tests {
         let serial = UartNull {};
         let logger_uninit = AdvancedLogger::<UartNull>::new(
             Format::Standard,
-            &[TargetFilter { target: "test_target", log_level: log::LevelFilter::Info, hw_mask_override: None }],
+            &[TargetFilter { target: "test_target", log_level: log::LevelFilter::Info, hw_filter_override: None }],
             log::LevelFilter::Debug,
             serial,
         );
@@ -490,7 +491,7 @@ mod tests {
 
     #[test]
     fn target_filter_overrides_global_to_be_more_permissive() {
-        let filters = [TargetFilter { target: "my_mod", log_level: log::LevelFilter::Info, hw_mask_override: None }];
+        let filters = [TargetFilter { target: "my_mod", log_level: log::LevelFilter::Info, hw_filter_override: None }];
         let logger = AdvancedLogger::new(Format::Standard, &filters, log::LevelFilter::Error, UartNull {});
 
         // Matching target uses the filter's level (Info)
@@ -505,7 +506,7 @@ mod tests {
 
     #[test]
     fn target_filter_restricts_below_global() {
-        let filters = [TargetFilter { target: "noisy", log_level: log::LevelFilter::Error, hw_mask_override: None }];
+        let filters = [TargetFilter { target: "noisy", log_level: log::LevelFilter::Error, hw_filter_override: None }];
         let logger = AdvancedLogger::new(Format::Standard, &filters, log::LevelFilter::Trace, UartNull {});
 
         // "noisy" target is restricted to Error only
@@ -519,7 +520,8 @@ mod tests {
 
     #[test]
     fn target_filter_matches_by_prefix() {
-        let filters = [TargetFilter { target: "my_crate", log_level: log::LevelFilter::Info, hw_mask_override: None }];
+        let filters =
+            [TargetFilter { target: "my_crate", log_level: log::LevelFilter::Info, hw_filter_override: None }];
         // Global is Off so anything not matching the filter is blocked.
         let logger = AdvancedLogger::new(Format::Standard, &filters, log::LevelFilter::Off, UartNull {});
 
